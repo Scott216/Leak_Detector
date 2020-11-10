@@ -3,18 +3,17 @@
 # I think default RPi i2c bus speed is too fast for Arduino/panStamp.
 # Edited /boot/config.txt and added:  dtparam=i2c_arm_baudrate=10000
 
-# To Do
-# Be able to reset panStamp. When you do, sleep(10) so panStamp has time to reboot and you don't get in Remote I/O error on RPi
-# See if you can use Try/Exception with I2C to make it more reliable
+# To Do:
+# Add code to reset panStamp. When you do, sleep(10) so panStamp has time to reboot and you don't get in Remote I/O error on RPi
+# See if you can use Try/Exception with I2C
 
 
 # Change Log
 # 11/05/20  v1.00 - Initial version after moving off Arduino.  Everything seems to be working, haven't added e-ink code yet
-# 11/07/20  v1.01 - Added code for e-ink displey, using circuit python modules for GPIO instead of RPi.GPIO
+# 11/10/20  v1.01 - Added code for e-ink display. Replaced RPi.GPIO with circuit python modules 
 
 
-# For pinout see pinout.txt
-
+# For RPi pinout see pinout.txt
 
 import smbus  # Used for I2C
 import time
@@ -32,13 +31,13 @@ import board       # https://circuitpython.readthedocs.io/en/5.3.x/shared-bindin
 
 
 i2c_address = 0x15  # 21 decimal
-data_len = 10 # I2C data packet is 10 bytes
+data_len = 10       # I2C data packet is 10 bytes
 
-NumWirelessSensors = 4  # max is 8
+NumWirelessSensors =  4  # max is 8
 NumWiredSensors    = 10
 
-resetSensorTimeofDay = 3600 * 8  # 8 AM - number of seconds after midnight to reset all the sensor wet/dry status
-doubleCheckDelay = 120  # seconds to wait after a sensor turn wet to double check it again
+resetSensorTimeofDay = 3600 * 8  # 8:00 AM - number of seconds after midnight to reset all the sensors' wet/dry status
+doubleCheckDelay =  120   # seconds to wait after a sensor turn wet to double check it again
 
 # wetStatus values
 DRY =              0
@@ -110,15 +109,19 @@ sensorInfo.append( clsLeakSensor(NumWirelessSensors + 9, "Wired 10",          DR
 
 #------------------------------------------------------------------
 # Get data from wireless sensors
+# Returns List
+#   0: Wet True/False
+#   1: Offline True/False
+#   2: Sensor ID
 #------------------------------------------------------------------
 def getWirelessSensors():
 
 #    somethingIsWetFlag = False # Flag set to True if any sensor is wet after the double-check
-    wirelessStatus = [False, False, 0]  # this function returns list: [water detected, sensor just went offline, ID of offline sensor]
-    
-    # Loop to request data from wireless sensors from panStamp receiver
+    wirelessStatus = [False, False, 0]  # this function returns list: [water detected, sensor just went offline, ID of sensor]
+
+    # Loop to request wireless sensors status from panStamp
     for wirelessID in range(NumWirelessSensors):
-        oldUpdateAge = sensorInfo[wirelessID].UpdateAge  # used to set flag if sensor has gone offline
+        oldUpdateAge = sensorInfo[wirelessID].UpdateAge  # used to set flag if sensor has transitioned to offline
         
         I2Cpacket = i2cbus.read_i2c_block_data(i2c_address, wirelessID, data_len) # Request data from panStamp via I2C
 
@@ -132,15 +135,19 @@ def getWirelessSensors():
             sensorInfo[wirelessID].battery     |= I2Cpacket[6]
             sensorInfo[wirelessID].rssi         = I2Cpacket[7] * -1
 
-        # Validate Data
-        if(sensorInfo[wirelessID].temperature > 120):
-            sensorInfo[wirelessID].temperature = -1;
 
         # See if sensor just went offline.  Only returns ID for one sensor.  This assumes multiple sensors will NOT go offline at the same time
         if ( (sensorInfo[wirelessID].UpdateAge == 255) and (oldUpdateAge < 255) ):
             wirelessStatus[1] = True
             wirelessStatus[2] = wirelessID
-            
+
+        # If offline, clear sensor info
+        if (sensorInfo[wirelessID].UpdateAge == 255):
+            sensorInfo[wirelessID].isWet = 0
+            sensorInfo[wirelessID].temperature = 0
+            sensorInfo[wirelessID].battery = 0
+            sensorInfo[wirelessID].rssi = 0
+
         # If sensor is online, then run code to check for wet
         if (sensorInfo[wirelessID].UpdateAge < 255):
                 
@@ -149,12 +156,20 @@ def getWirelessSensors():
                 sensorInfo[wirelessID].timeWet = time.time()
                 sensorInfo[wirelessID].wetStatus = WET_FROM_SENSOR
                 
+
             # If sensor is wet, then after a few minutes, double check again
             # isWet would have been updated again just now by I2Cpacket[2]
-            if ( (sensorInfo[wirelessID].isWet == True) \
-                 and (time.time() > sensorInfo[wirelessID].timeWet + doubleCheckDelay) \
-                 and (sensorInfo[wirelessID].wetStatus == WET_FROM_SENSOR) ):
+            if ( (sensorInfo[wirelessID].isWet == True) and 
+                 (time.time() > sensorInfo[wirelessID].timeWet + doubleCheckDelay) and
+                 (sensorInfo[wirelessID].wetStatus == WET_FROM_SENSOR) ):
+                
                 sensorInfo[wirelessID].wetStatus = WET_DOUBLECHECK
+                wirelessStatus[0] = True
+
+            
+            if( (sensorInfo[wirelessID].wetStatus ==   WET_DOUBLECHECK) or
+                (sensorInfo[wirelessID].wetStatus ==  WET_MESSAGE_SENT) ):
+                
                 wirelessStatus[0] = True
 
     return wirelessStatus
@@ -189,11 +204,17 @@ def getWiredSensors():
             
         # If sensor is wet, then after a few minutes, double check again
         # isWet would have been updated again just now by I2Cpacket[2]
-        if ( (sensorInfo[wiredID].isWet == True) and (time.time() > sensorInfo[wiredID].timeWet + doubleCheckDelay) and (sensorInfo[wiredID].wetStatus == WET_FROM_SENSOR) ):
+        if ( (sensorInfo[wiredID].isWet == True) and
+             (time.time() > sensorInfo[wiredID].timeWet + doubleCheckDelay) and
+             (sensorInfo[wiredID].wetStatus == WET_FROM_SENSOR) ):
+
             sensorInfo[wiredID].wetStatus = WET_DOUBLECHECK
             somethingIsWetFlag = True
 
-            
+         # If sensor has been wet for longer then double check delay, set flag   
+        if( sensorInfo[wiredID].wetStatus >= WET_DOUBLECHECK ):
+            somethingIsWetFlag = True
+
     return somethingIsWetFlag
 
 
@@ -202,6 +223,7 @@ def getWiredSensors():
 #------------------------------------------------------------------
 def printSensorInfo():
 
+    print(time.strftime("%m/%d/%Y %I:%M:%S %p"))
     for k in range(TotalSensors):
         if (sensorInfo[k].isWireless == True):
             # Wireless sensors
@@ -221,18 +243,19 @@ def printSensorInfo():
 # Send SMS via Twilio
 #------------------------------------------------------------------
 def sendSMS(sms_msg):
-##    try:
-##        smsclient = Client(private_credentials.TWILIO_ACCOUNT_SID, private_credentials.TWILIO_AUTH_TOKEN)
-##        message = smsclient.messages.create(body=sms_msg, from_=private_credentials.TWILIO_PHONE, to=private_credentials.TO_PHONE)
-##    except TwilioRestException as smserr:
-##        print("Twilio SMS failed: {}".format(smserr))
-##
-##    time.sleep(3)  # in case there are more than 1 message close together, don't send to quickly
+    try:
+        smsclient = Client(private_credentials.TWILIO_ACCOUNT_SID, private_credentials.TWILIO_AUTH_TOKEN)
+        message = smsclient.messages.create(body=sms_msg, from_=private_credentials.TWILIO_PHONE, to=private_credentials.TO_PHONE)
+    except TwilioRestException as smserr:
+        print("Twilio SMS failed: {}".format(smserr))
 
-    print(sms_msg)
+    print("SMS Message sent: {}".format(sms_msg))
+    time.sleep(3)  # In case there are more than 1 message close together, don't send to quickly
+
 
 #------------------------------------------------------------------
 # Send weekly status report with status of wireless sensors
+# ID, desc, temp and voltage
 #------------------------------------------------------------------
 def sendStatusReport():
 
@@ -243,31 +266,40 @@ def sendStatusReport():
         else:
             statusMsg = "{}{} is offline\n".format(statusMsg, sensorInfo[wirelessID].desc)
 
-    print(statusMsg)  # srg debug
+    sendSMS(statusMsg)
 
  
 #------------------------------------------------------------------
-# Display e-ink message
-# Display can show 8 lines of text
+# e-ink display updaate
+# Display can show 8 lines of text for font 16
+# Arguments:
+#  screen:
+#     1: Everything looks good message
+#     2: Pushbutton message + warnings
+#     3: Display list of warning  
 #------------------------------------------------------------------
-def einkMessage(TurnOnDisp):
-
-    numAlerts = 0
-    alertMsg = []
-    turnOnDisplayFlag = False # reset flag so this is not called over and over
+def einkMessage(screen):
 
     image = Image.new("RGB", (display.width, display.height), color=WHITE)
     draw = ImageDraw.Draw(image)
-    
-    if(TurnOnDisp == False):
-        buttonText = "< Push button for update"
-        textPos = [1,13]  # xy position.  0,0 is top left of screen
-        draw.text(textPos, buttonText, font=font16B, fill=BLACK)
+
+    if(screen == 1):
+        draw.text([20,50], "Everything looks good!", font=font16B, fill=BLACK)
         display.image(image)
         display.display()
-  
-    else:         
-        # Cycle through sensors and see what needs to be displayed
+        
+    if(screen == 2):
+        draw.text([15,17], "Push button for update >", font=font16B, fill=BLACK)
+        draw.text([ 1,70], "There are sensor warnings", font=font16B, fill=BLACK)
+        display.image(image)
+        display.display()
+
+    # Show all warnings
+    if(screen == 3):
+        numAlerts = 0
+        alertMsg = []
+        
+        # Cycle through wireless sensors and see what needs to be displayed
         for k in range (NumWirelessSensors):
             if ( (sensorInfo[k].wetStatus > 1) and (sensorInfo[k].UpdateAge < 255) ):
                 alertMsg.append("{} is wet".format(sensorInfo[k].desc))
@@ -281,7 +313,8 @@ def einkMessage(TurnOnDisp):
             if ( sensorInfo[k].UpdateAge == 255 ):
                 alertMsg.append("{} offline".format(sensorInfo[k].desc))
                 numAlerts += 1
-
+                
+        # Cycle through wired sensors and see what needs to be displayed
         for k in range (NumWiredSensors):
             if (sensorInfo[NumWirelessSensors + k].wetStatus > 1 ):
                 alertMsg.append("{} is wet".format(sensorInfo[NumWirelessSensors + k].desc))
@@ -289,16 +322,16 @@ def einkMessage(TurnOnDisp):
 
         linesPerScreen = 7
         numScreens = int(round(numAlerts/linesPerScreen + 0.5, 0))  # number of screens needed to display all the messages
-        msgNum = 0
+        msgNumCnt = 0  # counts number of messages displayed so far
         for i in range(numScreens):
             image = Image.new("RGB", (display.width, display.height), color=WHITE)
             draw = ImageDraw.Draw(image)
 
             for rowNum in range (linesPerScreen):
-                if (msgNum < numAlerts):
+                if (msgNumCnt < numAlerts):
                     textPos = [1, 15 * rowNum]
-                    draw.text(textPos, alertMsg[msgNum], font=font16B, fill=BLACK)
-                    msgNum += 1
+                    draw.text(textPos, alertMsg[msgNumCnt], font=font16B, fill=BLACK)
+                    msgNumCnt += 1
             if (i <= numScreens - 1):
                 draw.text([1, 105], "  ----- {} of {} screens -----".format(i+1, numScreens), font=font16B, fill=BLACK)
                 
@@ -310,20 +343,18 @@ def einkMessage(TurnOnDisp):
             while(time.time() < nextScreenTimer):
                 # If either button is pressed, go to next screen right away
                 if( (top_button.value == False) or (bot_button.value == False) ):
-                    time.sleep(0.1)  # debounce
+                    time.sleep(debounce)  # debounce
                     nextScreenTimer = 0
 
 
- 
 #------------------------------------------------------------------
 # Setup
 #------------------------------------------------------------------
 TotalSensors = NumWirelessSensors + NumWiredSensors
 
-dayOfMonth = datetime.datetime.today().day  # used in new day trigger
-resetSensorTimer = time.time() + (3600 * 24)  # This will be properly set at midnight
-
-statusReportTime = time.time() + (3600 * 24 * 7)  # This will be properly set at Sunday at midnight
+dayOfMonth = datetime.datetime.today().day         # Used in new day trigger
+resetSensorTimer = time.time() + (3600 * 24)       # This will be properly set at midnight
+statusReportTimer = time.time() + (3600 * 24 * 7)  # This will be properly set at Sunday at midnight
 
 # variables for eink display
 spi =  busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
@@ -331,35 +362,36 @@ ecs =  digitalio.DigitalInOut(board.CE0)
 dc =   digitalio.DigitalInOut(board.D22)
 rst =  digitalio.DigitalInOut(board.D27)
 busy = digitalio.DigitalInOut(board.D17)
-top_button = digitalio.DigitalInOut(board.D6)   # Top button on e-ink PC board
+top_button = digitalio.DigitalInOut(board.D5)   # Top button on e-ink PC board
 top_button.switch_to_input()
-bot_button = digitalio.DigitalInOut(board.D5)   # Bottom button on e-ink PC board
+bot_button = digitalio.DigitalInOut(board.D6)   # Bottom button on e-ink PC board
 bot_button.switch_to_input()
 
 
-# Initialize the Display
+# Initialize e-ink display
 display = Adafruit_SSD1675(122, 250, spi, cs_pin=ecs, dc_pin=dc, sramcs_pin=None, rst_pin=rst, busy_pin=busy,)
-display.rotation = 1
+display.rotation = 3  # 1 will flip 180 degrees
 WHITE = (255,255,255)
 BLACK = (0,0,0)
 
 font16 =  ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 16)
 font16B = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
 
-printStatusTimer = time.time() + 10 #  prints status info every 5 seconds
+printStatusTimer = time.time() + 5  # Prints status info 
 
-displayOnTimer = 0  # timer to turn on e-ink display after top button is pressed
-turnOnDisplayFlag = False  # one-shot flag so display is not updated over and over
-einkMessage(False) # displayes default screen
-
+displayOnTimer = 0  # Timer to turn on e-ink display after top button is pressed
+activeMsg = False # True if any sensor has a warning Wet, cold, low battery
+einkMessage(1) # Displayes default screen
 
 #------------------------------------------------------------------
 # Main Program
 #------------------------------------------------------------------
 while True:
 
-    wirelessResult = getWirelessSensors()  # loops through wireless sensors, returns list [0:wet T/F, 1:offline T/F, 2:offline TxID]
-    wiredResult =    getWiredSensors()     # loops through wired sensors, returns True if anything is wet
+    debounce = 0.1 # E-ink PCB button debounce time
+
+    wirelessResult = getWirelessSensors()  # Loops through wireless sensors, returns list [0:wet T/F, 1:offline T/F, 2:offline TxID]
+    wiredResult =    getWiredSensors()     # Loops through wired sensors, returns True if anything is wet
     
     if(wirelessResult[0] or wiredResult):
         # Something is wet, loop through sensors to see which ones.
@@ -391,15 +423,15 @@ while True:
         if ( (sensorInfo[k].battery < lowVoltSetting) and (sensorInfo[k].UpdateAge < 255)):
             batteryAlert = True
 
-    # check for a new day
+    # Check for a new day
     if(dayOfMonth != datetime.datetime.today().day):
         dayOfMonth = datetime.datetime.today().day # update dayOfMonth with the new day
-        # set timer to clear all the wet status data later in the day
-        resetSensorTimer = time.time() + resetSensorTimeofDay  # set timer to reset sensors
+        # Set timer to clear all the wet status data later in the day
+        resetSensorTimer = time.time() + resetSensorTimeofDay  # set timer to reset sensors - 8:00 AM
 
-        #see if the new day is a Sunday
+        # See if the new day is a Sunday
         if (datetime.datetime.today().weekday() == 6):
-            statusReportTime = time.time() + (3600 * 12)  # send a status report of wireless sensors every Sunday at noon
+            statusReportTimer = time.time() + (3600 * 12)  # send a status report of wireless sensors every Sunday at noon
 
     # Reset wet/dry status of all sensors.  This is done once a day
     if (time.time() > resetSensorTimer):
@@ -407,24 +439,44 @@ while True:
         for k in range(TotalSensors):
             sensorInfo[k].resetWet()
 
-    # check to see if it's time to send weekly update of wireless sensor status
-    if(time.time() > statusReportTime):
-        statusReportTime = time.time() + (3600 * 24 * 7)  # set to next sunday
+    # Check to see if it's time to send weekly update of wireless sensor status
+    if(time.time() > statusReportTimer):
+        statusReportTimer = time.time() + (3600 * 24 * 7)  # set to next Sunday
         sendStatusReport()
-        
+
+    # Print sensor info
     if (time.time() > printStatusTimer):
         printSensorInfo()
-        printStatusTimer = time.time() + 20
+        printStatusTimer = time.time() + 30
 
-    # Turn on e-ink display to show status
-    if(top_button.value == False):
+    # Transition from no warning to at least one, update display standyby screen
+    if ((wirelessResult[0] or wiredResult or coldAlert or batteryAlert) and (activeMsg == False)):
+        # Went from No active messages to active messages
+        activeMsg = True
+        einkMessage(2)
+
+    # All warning have cleared, update display standby screen
+    if (wirelessResult[0] == False and
+              wiredResult == False and
+                coldAlert == False and
+             batteryAlert == False and
+               activeMsg == True):
+        # Went from No active messages to active messages
+        activeMsg = False
+        einkMessage(1)
+ 
+    # Show status on display
+    if( (top_button.value == False) and (activeMsg == True) ):
         displayOnTimer = time.time() + 60  # turn on message screen for 60 seconds
-        turnOnDisplayFlag = True
-        time.sleep(0.1)   # debounce
-        einkMessage(True)  # display will cycle through sensors and display and warning
+        time.sleep(debounce)  
+        einkMessage(3)  # Display will cycle through sensors and display and warning
 
     # After display has been on for enough time to read messages, revert back to standby screen
     if ( (displayOnTimer > 0) and (time.time() > displayOnTimer) ):
-        displayOnTimer = 0 # set to zero so this screen called over and over
-        einkMessage(False)  # display reverts back to standby screen
+        displayOnTimer = 0 # Set to zero so this screen is not called over and over
+        if (activeMsg == True):
+            einkMessage(2)  # Display reverts back to standby screen with warning
+        else:
+            einkMessage(1)  # Display reverts back to standby screen no warning
+            
     
