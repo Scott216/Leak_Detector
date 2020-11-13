@@ -11,7 +11,7 @@
 # Change Log
 # 11/05/20  v1.00 - Initial version after moving off Arduino.  Everything seems to be working, haven't added e-ink code yet
 # 11/10/20  v1.01 - Added code for e-ink display. Replaced RPi.GPIO with circuit python modules 
-
+# 11/12/20  v1.02 - This version should be good 
 
 # For RPi pinout see pinout.txt
 
@@ -85,7 +85,7 @@ nopin = 0
 wired = False
 Wireless = True
 time1 = 0
-IOThing = 0 # place holder in belor array for IO_Pin object in digitalio.DigitalInOut
+IOThing = 0 # place holder in below array for IO_Pin object in digitalio.DigitalInOut
 age = 255 # set default for UpdateAge (seconds since last received data from wireless sensor) to 255 which represents sensor is offline
 
 # create array for sensors using class clsLeakSensor and fill in defaults
@@ -112,12 +112,11 @@ sensorInfo.append( clsLeakSensor(NumWirelessSensors + 9, "Wired 10",          DR
 # Returns List
 #   0: Wet True/False
 #   1: Offline True/False
-#   2: Sensor ID
+#   2: Sensor ID of wireless sensor that went offline
 #------------------------------------------------------------------
 def getWirelessSensors():
 
-#    somethingIsWetFlag = False # Flag set to True if any sensor is wet after the double-check
-    wirelessStatus = [False, False, 0]  # this function returns list: [water detected, sensor just went offline, ID of sensor]
+    wirelessStatus = [False, False, 0]  # list to be returned by function
 
     # Loop to request wireless sensors status from panStamp
     for wirelessID in range(NumWirelessSensors):
@@ -133,7 +132,7 @@ def getWirelessSensors():
             sensorInfo[wirelessID].temperature |= I2Cpacket[4]
             sensorInfo[wirelessID].battery      = I2Cpacket[5] << 8
             sensorInfo[wirelessID].battery     |= I2Cpacket[6]
-            sensorInfo[wirelessID].rssi         = I2Cpacket[7] * -1
+            sensorInfo[wirelessID].rssi         = I2Cpacket[7] * -1  # convert RSSI back to a negative number
 
 
         # See if sensor just went offline.  Only returns ID for one sensor.  This assumes multiple sensors will NOT go offline at the same time
