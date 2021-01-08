@@ -12,6 +12,7 @@
 # 11/05/20  v1.00 - Initial version after moving off Arduino.  Everything seems to be working, haven't added e-ink code yet
 # 11/10/20  v1.01 - Added code for e-ink display. Replaced RPi.GPIO with circuit python modules 
 # 11/12/20  v1.02 - This version should be good 
+# 01/07/21  v1.03 - Added buzzer/LED output, GPIO 23
 
 # For RPi pinout see pinout.txt
 
@@ -366,6 +367,11 @@ top_button.switch_to_input()
 bot_button = digitalio.DigitalInOut(board.D6)   # Bottom button on e-ink PC board
 bot_button.switch_to_input()
 
+# Output pin for external buzzer and LED
+buzzer = digitalio.DigitalInOut(board.D23)
+buzzer.direction = digitalio.Direction.OUTPUT
+buzzer.value = False
+
 
 # Initialize e-ink display
 display = Adafruit_SSD1675(122, 250, spi, cs_pin=ecs, dc_pin=dc, sramcs_pin=None, rst_pin=rst, busy_pin=busy,)
@@ -400,6 +406,7 @@ while True:
                 msgWet = "{} has detected water".format(sensorInfo[k].desc)
                 sendSMS(msgWet)
                 sensorInfo[k].wetStatus = WET_MESSAGE_SENT   # Set status so message isn't sent again
+                buzzer.value = True
 
     # Check if sensor just went offline
     if(wirelessResult[1]):
@@ -437,6 +444,7 @@ while True:
         resetSensorTimer += (3600 * 24)  # add 24 hours to timer.  It will actually get updated again at midnight to keep it accurate
         for k in range(TotalSensors):
             sensorInfo[k].resetWet()
+        buzzer.value = False
 
     # Check to see if it's time to send weekly update of wireless sensor status
     if(time.time() > statusReportTimer):
