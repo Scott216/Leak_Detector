@@ -13,6 +13,8 @@
 # 11/10/20  v1.01 - Added code for e-ink display. Replaced RPi.GPIO with circuit python modules 
 # 11/12/20  v1.02 - This version should be good 
 # 01/07/21  v1.03 - Added buzzer/LED output, GPIO 23
+# 02/18/21  v1.04 - Changed printSensorInfo() format.  Missing input for hot tub back.  Added checksum verification.
+#                   Added code to reset sensor to dry if it turned from wet to dry before double check timer timed out
 
 # For RPi pinout see pinout.txt
 
@@ -32,10 +34,11 @@ import board       # https://circuitpython.readthedocs.io/en/5.3.x/shared-bindin
 
 
 i2c_address = 0x15  # 21 decimal
-data_len = 10       # I2C data packet is 10 bytes
+data_len = 10       # I2C data length packet is 10 bytes
+checksum_byte = data_len - 1 # Last byte in I2C packet is checksum
 
-NumWirelessSensors =  4  # max is 8
-NumWiredSensors    = 10
+NumWirelessSensors =  3  # max is 8
+NumWiredSensors    = 11
 
 resetSensorTimeofDay = 3600 * 8  # 8:00 AM - number of seconds after midnight to reset all the sensors' wet/dry status
 doubleCheckDelay =  120   # seconds to wait after a sensor turn wet to double check it again
@@ -103,8 +106,9 @@ sensorInfo.append( clsLeakSensor(NumWirelessSensors + 4, "Boiler",            DR
 sensorInfo.append( clsLeakSensor(NumWirelessSensors + 5, "Kitchen Frig",      DRY, time1, DRY, wired,   board.D16, 0, 0, 0, 0, False, IOThing) )
 sensorInfo.append( clsLeakSensor(NumWirelessSensors + 6, "Dishwasher",        DRY, time1, DRY, wired,   board.D26, 0, 0, 0, 0, False, IOThing) )
 sensorInfo.append( clsLeakSensor(NumWirelessSensors + 7, "Kitchen Sink",      DRY, time1, DRY, wired,   board.D20, 0, 0, 0, 0, False, IOThing) )
-sensorInfo.append( clsLeakSensor(NumWirelessSensors + 8, "Hot Tub",           DRY, time1, DRY, wired,   board.D21, 0, 0, 0, 0, False, IOThing) )
-sensorInfo.append( clsLeakSensor(NumWirelessSensors + 9, "Wired 10",          DRY, time1, DRY, wired,   board.D4,  0, 0, 0, 0, False, IOThing) )
+sensorInfo.append( clsLeakSensor(NumWirelessSensors + 8, "Hot Tub Filter",    DRY, time1, DRY, wired,   board.D21, 0, 0, 0, 0, False, IOThing) )
+sensorInfo.append( clsLeakSensor(NumWirelessSensors + 9, "Hot Tub Back",      DRY, time1, DRY, wired,   board.D24, 0, 0, 0, 0, False, IOThing) )
+sensorInfo.append( clsLeakSensor(NumWirelessSensors + 10, "Spare 1",          DRY, time1, DRY, wired,   board.D4,  0, 0, 0, 0, False, IOThing) )
 
 
 
@@ -117,60 +121,75 @@ sensorInfo.append( clsLeakSensor(NumWirelessSensors + 9, "Wired 10",          DR
 #------------------------------------------------------------------
 def getWirelessSensors():
 
-    wirelessStatus = [False, False, 0]  # list to be returned by function
+    wirelessStatus = [False, False, 1]  # list to be returned by function
 
     # Loop to request wireless sensors status from panStamp
     for wirelessID in range(NumWirelessSensors):
-        oldUpdateAge = sensorInfo[wirelessID].UpdateAge  # used to set flag if sensor has transitioned to offline
+        prevUpdateAge = sensorInfo[wirelessID].UpdateAge  # used to set flag if sensor has transitioned to offline
         
         I2Cpacket = i2cbus.read_i2c_block_data(i2c_address, wirelessID, data_len) # Request data from panStamp via I2C
 
-        if (I2Cpacket[0] == wirelessID):  # panStamp returns 255 for sensorID if invalid sensor request is made
-            sensorInfo[wirelessID].ID           = I2Cpacket[0]
-            sensorInfo[wirelessID].UpdateAge    = I2Cpacket[1]       # secibds since data was last received for wireless sensor
-            sensorInfo[wirelessID].isWet        = I2Cpacket[2]
-            sensorInfo[wirelessID].temperature  = I2Cpacket[3] << 8
-            sensorInfo[wirelessID].temperature |= I2Cpacket[4]
-            sensorInfo[wirelessID].battery      = I2Cpacket[5] << 8
-            sensorInfo[wirelessID].battery     |= I2Cpacket[6]
-            sensorInfo[wirelessID].rssi         = I2Cpacket[7] * -1  # convert RSSI back to a negative number
+        # calculate checksum
+        checksum = 0
+        for cs in range(checksum_byte):
+            checksum = checksum +  I2Cpacket[cs]
 
-
-        # See if sensor just went offline.  Only returns ID for one sensor.  This assumes multiple sensors will NOT go offline at the same time
-        if ( (sensorInfo[wirelessID].UpdateAge == 255) and (oldUpdateAge < 255) ):
-            wirelessStatus[1] = True
-            wirelessStatus[2] = wirelessID
-
-        # If offline, clear sensor info
-        if (sensorInfo[wirelessID].UpdateAge == 255):
-            sensorInfo[wirelessID].isWet = 0
-            sensorInfo[wirelessID].temperature = 0
-            sensorInfo[wirelessID].battery = 0
-            sensorInfo[wirelessID].rssi = 0
-
-        # If sensor is online, then run code to check for wet
-        if (sensorInfo[wirelessID].UpdateAge < 255):
-                
-            # If sensor just turned wet, then update timeWet and wetStatus
-            if ( (sensorInfo[wirelessID].isWet == True) and (sensorInfo[wirelessID].wetStatus == DRY) ):
-                sensorInfo[wirelessID].timeWet = time.time()
-                sensorInfo[wirelessID].wetStatus = WET_FROM_SENSOR
-                
-
-            # If sensor is wet, then after a few minutes, double check again
-            # isWet would have been updated again just now by I2Cpacket[2]
-            if ( (sensorInfo[wirelessID].isWet == True) and 
-                 (time.time() > sensorInfo[wirelessID].timeWet + doubleCheckDelay) and
-                 (sensorInfo[wirelessID].wetStatus == WET_FROM_SENSOR) ):
-                
-                sensorInfo[wirelessID].wetStatus = WET_DOUBLECHECK
-                wirelessStatus[0] = True
-
+        # Check packet checksum byte
+        if (checksum % 256 != I2Cpacket[checksum_byte]):
+            print("Checksum failed: {}".format(I2Cpacket))
             
-            if( (sensorInfo[wirelessID].wetStatus ==   WET_DOUBLECHECK) or
-                (sensorInfo[wirelessID].wetStatus ==  WET_MESSAGE_SENT) ):
+        else:
+            if (I2Cpacket[0] == wirelessID):  # panStamp returns 255 for sensorID if invalid sensor request is made
+                sensorInfo[wirelessID].ID           = I2Cpacket[0]
+                sensorInfo[wirelessID].UpdateAge    = I2Cpacket[1]       # seconds since data was last received for wireless sensor
+                sensorInfo[wirelessID].isWet        = I2Cpacket[2]
+                sensorInfo[wirelessID].temperature  = I2Cpacket[3] << 8
+                sensorInfo[wirelessID].temperature |= I2Cpacket[4]
+                sensorInfo[wirelessID].battery      = I2Cpacket[5] << 8
+                sensorInfo[wirelessID].battery     |= I2Cpacket[6]
+                sensorInfo[wirelessID].rssi         = I2Cpacket[7] * -1  # convert RSSI back to a negative number
+
+
+            # See if sensor just went offline.  Only returns ID for one sensor.  This assumes multiple sensors will NOT go offline at the same time
+            if ( (sensorInfo[wirelessID].UpdateAge == 255) and (prevUpdateAge < 255) ):
+                wirelessStatus[1] = True
+                wirelessStatus[2] = wirelessID
+
+            # If offline, clear sensor info
+            if (sensorInfo[wirelessID].UpdateAge == 255):
+                sensorInfo[wirelessID].isWet = 0
+                sensorInfo[wirelessID].temperature = 0
+                sensorInfo[wirelessID].battery = 0
+                sensorInfo[wirelessID].rssi = 0
+
+            # If sensor is online, then run code to check for wet
+            if (sensorInfo[wirelessID].UpdateAge < 255):
+
+
+                # If sensor turned from wet to dry before double check timer timed out, then reset status to dry
+                if ( (sensorInfo[wirelessID].isWet == False) and (sensorInfo[wirelessID].wetStatus == WET_FROM_SENSOR) ):
+                    sensorInfo[wirelessID].wetStatus = DRY
+                            
+                # If sensor just turned wet, then update timeWet and wetStatus
+                if ( (sensorInfo[wirelessID].isWet == True) and (sensorInfo[wirelessID].wetStatus == DRY) ):
+                    sensorInfo[wirelessID].timeWet = time.time()
+                    sensorInfo[wirelessID].wetStatus = WET_FROM_SENSOR
+                    
+
+                # If sensor is wet, then after a few minutes, double check again
+                # isWet would have been updated again just now by I2Cpacket[2]
+                if ( (sensorInfo[wirelessID].isWet == True) and 
+                     (time.time() > sensorInfo[wirelessID].timeWet + doubleCheckDelay) and
+                     (sensorInfo[wirelessID].wetStatus == WET_FROM_SENSOR) ):
+                    
+                    sensorInfo[wirelessID].wetStatus = WET_DOUBLECHECK
+                    wirelessStatus[0] = True
+
                 
-                wirelessStatus[0] = True
+                if( (sensorInfo[wirelessID].wetStatus ==  WET_DOUBLECHECK) or
+                    (sensorInfo[wirelessID].wetStatus ==  WET_MESSAGE_SENT) ):
+                    
+                    wirelessStatus[0] = True
 
     return wirelessStatus
 
@@ -197,6 +216,10 @@ def getWiredSensors():
         # Readings match, could be wet or dry, put value in isWet
         sensorInfo[wiredID].isWet = firstReading
 
+        # If sensor turned from wet to dry before double check timer timed out, then reset status to dry
+        if ( (sensorInfo[wiredID].isWet == False) and (sensorInfo[wiredID].wetStatus == WET_FROM_SENSOR) ):
+            sensorInfo[wiredID].wetStatus = DRY
+
         # If sensor just turned wet, then update timeWet and wetStatus
         if ( (sensorInfo[wiredID].isWet == True) and (sensorInfo[wiredID].wetStatus == DRY) ):
             sensorInfo[wiredID].timeWet = time.time()
@@ -220,6 +243,10 @@ def getWiredSensors():
 
 #------------------------------------------------------------------
 # Print Sensor Info
+# Wet Status:
+#   1 = water detected, not double checked
+#   2 = still wet after double checked, but SMS not setn
+#   3 = SMS Sent
 #------------------------------------------------------------------
 def printSensorInfo():
 
@@ -227,16 +254,16 @@ def printSensorInfo():
     for k in range(TotalSensors):
         if (sensorInfo[k].isWireless == True):
             # Wireless sensors
-            print("ID:{:2.0f}\tWet:{},{}\t  Age:{:3.0f}\t Temp:{:2.0f}\tmV:{:4.0f}\t RSSI:{:3.0f}   {}".format(       \
+            print("ID:{:2.0f}\tIs wet now: {:.0f}\tWet Status: {}\t  Age:{:3.0f}\t Temp:{:2.0f}\tmV:{:4.0f}\t RSSI:{:3.0f}   {}".format(       \
                                               sensorInfo[k].ID, sensorInfo[k].isWet, sensorInfo[k].wetStatus, sensorInfo[k].UpdateAge,       \
                                               sensorInfo[k].temperature, sensorInfo[k].battery, sensorInfo[k].rssi, \
                                               sensorInfo[k].desc))
         else:
             #Wired sensors
-            print("ID:{:2.0f}\tWet:{:.0f},{}\t  Age:{}\t Temp:{}\tmV:{}\t RSSI:{}   {}".format(   \
+            print("ID:{:2.0f}\tIs wet now: {:.0f}\tWet Status: {}\t  Age:{}\t Temp:{}\tmV:{}\t RSSI:{}   {}".format(   \
                                               sensorInfo[k].ID, sensorInfo[k].isWet, sensorInfo[k].wetStatus, "   ",  \
                                               "  ", "    ", "   ", sensorInfo[k].desc))
-    print("-----------------------------------------------------------------------------")
+    print("----------------------------------------------------------------------------------------------------------")
 
 
 #------------------------------------------------------------------

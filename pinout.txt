@@ -9,7 +9,7 @@
 # Pin  4  (5 v)  
 # Pin  5  (GPIO 03, SCL)  I2C SCL  --------------- A5
 # Pin  6  (GND)  
-# Pin  7  (GPIO 04, CLK)  Spare Sensor 01
+# Pin  7  (GPIO 04, CLK)  Spare Sensor 01 - Water tank - I think this went to old water tank in closet
 # Pin  8  (GPIO 14, TX)  UART      --------------- D0 RX (reserved future use)
 # Pin  9  (GND)  
 # Pin 10  (GPIO 15, RX)  UART      --------------- D1 TX (reserved future use)
@@ -20,7 +20,7 @@
 # Pin 15  (GPIO 22)  D/C (e-Ink)
 # Pin 16  (GPIO 23)  Buzzer
 # Pin 17  (3.3 v)  
-# Pin 18  (GPIO 24)  Leak Detected LED
+# Pin 18  (GPIO 24)  Hot Tub
 # Pin 19  (GPIO 10 SPI_MOSI)  SPI MOSI (e-Ink)
 # Pin 20  (GND)  
 # Pin 21  (GPIO 09 SPI_MOSO)  SPI MOSO (e-Ink)
@@ -34,7 +34,7 @@
 # Pin 29  (GPIO 05)  Button (e-Ink)
 # Pin 30  (GND)  
 # Pin 31  (GPIO 06)  Button (e-Ink)
-# Pin 32  (GPIO 12)  Dehumidifier
+# Pin 32  (GPIO 12)  Spare 2 (Dehumidifier)
 # Pin 33  (GPIO 13)  Hot Water Tank
 # Pin 34  (GND)  
 # Pin 35  (GPIO 19)  Boiler
@@ -42,4 +42,4 @@
 # Pin 37  (GPIO 26)  Dishwasher
 # Pin 38  (GPIO 20)  Kitchen Sink
 # Pin 39  (GND)  
-# Pin 40  (GPIO 21)  Hot Tub
+# Pin 40  (GPIO 21)  Hot Tub Filter
