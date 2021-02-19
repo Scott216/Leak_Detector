@@ -7,6 +7,7 @@
 # Add code to reset panStamp. When you do, sleep(10) so panStamp has time to reboot and you don't get in Remote I/O error on RPi
 # See if you can use Try/Exception with I2C
 
+# For RPi pinout see /home/pi/Desktop/Leak_Detector/pinout.txt
 
 # Change Log
 # 11/05/20  v1.00 - Initial version after moving off Arduino.  Everything seems to be working, haven't added e-ink code yet
@@ -15,8 +16,9 @@
 # 01/07/21  v1.03 - Added buzzer/LED output, GPIO 23
 # 02/18/21  v1.04 - Changed printSensorInfo() format.  Missing input for hot tub back.  Added checksum verification.
 #                   Added code to reset sensor to dry if it turned from wet to dry before double check timer timed out
+# 02/19/21  v1.05 - Added variable for print sensor seconds.  Added flag (PRINT_DETAIL_OPTION) to printSensorInfo() to either print all or only wet
 
-# For RPi pinout see pinout.txt
+VERSION = "1.05"
 
 import smbus  # Used for I2C
 import time
@@ -40,6 +42,8 @@ checksum_byte = data_len - 1 # Last byte in I2C packet is checksum
 NumWirelessSensors =  3  # max is 8
 NumWiredSensors    = 11
 
+PRINT_DETAIL_OPTION = False  # True prints all, False prints only wet
+printStatusSeconds = 30
 resetSensorTimeofDay = 3600 * 8  # 8:00 AM - number of seconds after midnight to reset all the sensors' wet/dry status
 doubleCheckDelay =  120   # seconds to wait after a sensor turn wet to double check it again
 
@@ -243,27 +247,33 @@ def getWiredSensors():
 
 #------------------------------------------------------------------
 # Print Sensor Info
+# Detail level: True = print all sensors, False = print wet sensors
 # Wet Status:
 #   1 = water detected, not double checked
 #   2 = still wet after double checked, but SMS not setn
 #   3 = SMS Sent
 #------------------------------------------------------------------
-def printSensorInfo():
+def printSensorInfo(detailLevel):
 
-    print(time.strftime("%m/%d/%Y %I:%M:%S %p"))
+    SensorIsWetFlag = False  # set to true if anything is wet. 
+    
     for k in range(TotalSensors):
-        if (sensorInfo[k].isWireless == True):
-            # Wireless sensors
-            print("ID:{:2.0f}\tIs wet now: {:.0f}\tWet Status: {}\t  Age:{:3.0f}\t Temp:{:2.0f}\tmV:{:4.0f}\t RSSI:{:3.0f}   {}".format(       \
-                                              sensorInfo[k].ID, sensorInfo[k].isWet, sensorInfo[k].wetStatus, sensorInfo[k].UpdateAge,       \
-                                              sensorInfo[k].temperature, sensorInfo[k].battery, sensorInfo[k].rssi, \
-                                              sensorInfo[k].desc))
-        else:
-            #Wired sensors
-            print("ID:{:2.0f}\tIs wet now: {:.0f}\tWet Status: {}\t  Age:{}\t Temp:{}\tmV:{}\t RSSI:{}   {}".format(   \
-                                              sensorInfo[k].ID, sensorInfo[k].isWet, sensorInfo[k].wetStatus, "   ",  \
-                                              "  ", "    ", "   ", sensorInfo[k].desc))
-    print("----------------------------------------------------------------------------------------------------------")
+        if(detailLevel == True or sensorInfo[k].isWet == True or sensorInfo[k].wetStatus > 0):
+            if (SensorIsWetFlag == False):
+                print("----------------------------------------------------------------------------------------------------------")
+                print(time.strftime("%m/%d/%Y %I:%M:%S %p"))
+            SensorIsWetFlag = True
+            if (sensorInfo[k].isWireless == True):
+                # Wireless sensors
+                print("ID:{:2.0f}\tIs wet now: {:.0f}\tWet Status: {}\t  Age:{:3.0f}\t Temp:{:2.0f}\tmV:{:4.0f}\t RSSI:{:3.0f}   {}".format(       \
+                                                  sensorInfo[k].ID, sensorInfo[k].isWet, sensorInfo[k].wetStatus, sensorInfo[k].UpdateAge,       \
+                                                  sensorInfo[k].temperature, sensorInfo[k].battery, sensorInfo[k].rssi, \
+                                                  sensorInfo[k].desc))
+            else:
+                #Wired sensors
+                print("ID:{:2.0f}\tIs wet now: {:.0f}\tWet Status: {}\t  Age:{}\t Temp:{}\tmV:{}\t RSSI:{}   {}".format(   \
+                                                  sensorInfo[k].ID, sensorInfo[k].isWet, sensorInfo[k].wetStatus, "   ",  \
+                                                  "  ", "    ", "   ", sensorInfo[k].desc))
 
 
 #------------------------------------------------------------------
@@ -415,6 +425,9 @@ displayOnTimer = 0  # Timer to turn on e-ink display after top button is pressed
 activeMsg = False # True if any sensor has a warning Wet, cold, low battery
 einkMessage(1) # Displayes default screen
 
+print ("Water Leak Detector, version " + VERSION + "\n")
+
+
 #------------------------------------------------------------------
 # Main Program
 #------------------------------------------------------------------
@@ -480,8 +493,8 @@ while True:
 
     # Print sensor info
     if (time.time() > printStatusTimer):
-        printSensorInfo()
-        printStatusTimer = time.time() + 30
+        printSensorInfo(PRINT_DETAIL_OPTION)
+        printStatusTimer = time.time() + printStatusSeconds
 
     # Transition from no warning to at least one, update display standyby screen
     if ((wirelessResult[0] or wiredResult or coldAlert or batteryAlert) and (activeMsg == False)):
