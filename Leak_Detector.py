@@ -4,8 +4,8 @@
 # Edited /boot/config.txt and added:  dtparam=i2c_arm_baudrate=10000
 
 # To Do:
-# Add code to reset panStamp. When you do, sleep(10) so panStamp has time to reboot and you don't get in Remote I/O error on RPi
 # See if you can use Try/Exception with I2C
+# Restart panStamp if all wireless sensors go offline at the same time
 
 # For RPi pinout see /home/pi/Desktop/Leak_Detector/pinout.txt
 
@@ -17,8 +17,12 @@
 # 02/18/21  v1.04 - Changed printSensorInfo() format.  Missing input for hot tub back.  Added checksum verification.
 #                   Added code to reset sensor to dry if it turned from wet to dry before double check timer timed out
 # 02/19/21  v1.05 - Added variable for print sensor seconds.  Added flag (PRINT_DETAIL_OPTION) to printSensorInfo() to either print all or only wet
-
-VERSION = "1.05"
+# 02/27/21  v1.06 - To print printSensorInfo() changed to print offline sensors 
+# 03/05/21  v1.07 - In Main program, but temp code to stop SMS for wireless sensors going offline.  Seems to be happening because signal strength
+#                   is low for Guest Bathroom.  Could change code in panStamp Rx so it counts offline in minutes instead of seconds
+# 11/07/21  v1.08 - changed printStatusSeconds from 30 seconds to 120 seconds.  Added code to reset panStamp on startup
+  
+VERSION = "1.08"
 
 import smbus  # Used for I2C
 import time
@@ -34,6 +38,8 @@ import busio       # https://circuitpython.readthedocs.io/en/latest/shared-bindi
 import board       # https://circuitpython.readthedocs.io/en/5.3.x/shared-bindings/board/__init__.html
 
 
+PRINT_DETAIL_OPTION = False  # True prints status of all sensors, False prints only wet sensors status
+
 
 i2c_address = 0x15  # 21 decimal
 data_len = 10       # I2C data length packet is 10 bytes
@@ -42,8 +48,7 @@ checksum_byte = data_len - 1 # Last byte in I2C packet is checksum
 NumWirelessSensors =  3  # max is 8
 NumWiredSensors    = 11
 
-PRINT_DETAIL_OPTION = False  # True prints all, False prints only wet
-printStatusSeconds = 30
+printStatusSeconds = 120
 resetSensorTimeofDay = 3600 * 8  # 8:00 AM - number of seconds after midnight to reset all the sensors' wet/dry status
 doubleCheckDelay =  120   # seconds to wait after a sensor turn wet to double check it again
 
@@ -247,7 +252,7 @@ def getWiredSensors():
 
 #------------------------------------------------------------------
 # Print Sensor Info
-# Detail level: True = print all sensors, False = print wet sensors
+# Detail level: True = print all sensors, False = print wet sensors and offline sensors
 # Wet Status:
 #   1 = water detected, not double checked
 #   2 = still wet after double checked, but SMS not setn
@@ -258,9 +263,9 @@ def printSensorInfo(detailLevel):
     SensorIsWetFlag = False  # set to true if anything is wet. 
     
     for k in range(TotalSensors):
-        if(detailLevel == True or sensorInfo[k].isWet == True or sensorInfo[k].wetStatus > 0):
+        if(detailLevel == True or sensorInfo[k].isWet == True or sensorInfo[k].wetStatus > 0 or sensorInfo[k].UpdateAge > 150):
             if (SensorIsWetFlag == False):
-                print("----------------------------------------------------------------------------------------------------------")
+#                print("----------------------------------------------------------------------------------------------------------")
                 print(time.strftime("%m/%d/%Y %I:%M:%S %p"))
             SensorIsWetFlag = True
             if (sensorInfo[k].isWireless == True):
@@ -427,6 +432,15 @@ einkMessage(1) # Displayes default screen
 
 print ("Water Leak Detector, version " + VERSION + "\n")
 
+# Reset panStamp on startup
+print ("Resetting panStamp - 11 seconds")
+panStampReset = digitalio.DigitalInOut(board.D18)
+panStampReset.direction = digitalio.Direction.OUTPUT
+panStampReset.value = False
+time.sleep(1)
+panStampReset.value = True
+time.sleep(10)
+print ("Finished resetting panStamp\n")
 
 #------------------------------------------------------------------
 # Main Program
@@ -451,7 +465,7 @@ while True:
     # Check if sensor just went offline
     if(wirelessResult[1]):
         msgOffline = "{} just went offline".format(sensorInfo[wirelessResult[2]].desc)
-        sendSMS(msgOffline)
+#srg 210305 temporarily disable        sendSMS(msgOffline)
         
     # Check wireless sensor temperatures
     coldAlert = False
@@ -488,7 +502,7 @@ while True:
 
     # Check to see if it's time to send weekly update of wireless sensor status
     if(time.time() > statusReportTimer):
-        statusReportTimer = time.time() + (3600 * 24 * 7)  # set to next Sunday
+        statusReportTimer = time.time() + (3600 * 24 * 7) # set to next Sunday  
         sendStatusReport()
 
     # Print sensor info
