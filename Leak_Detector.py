@@ -6,8 +6,15 @@
 # To Do:
 # See if you can use Try/Exception with I2C
 # Restart panStamp if all wireless sensors go offline at the same time
+# Send SMS text on startup
+# Add time to e-ink so you can tell if it's updating, https://www.programiz.com/python-programming/datetime/current-datetime
+
+
 
 # For RPi pinout see /home/pi/Desktop/Leak_Detector/pinout.txt
+# printSensorInfo() function will either print all the sensors status, or just wet or offline sensor info.  See PRINT_DETAIL_OPTION variable
+
+
 
 # Change Log
 # 11/05/20  v1.00 - Initial version after moving off Arduino.  Everything seems to be working, haven't added e-ink code yet
@@ -21,8 +28,11 @@
 # 03/05/21  v1.07 - In Main program, but temp code to stop SMS for wireless sensors going offline.  Seems to be happening because signal strength
 #                   is low for Guest Bathroom.  Could change code in panStamp Rx so it counts offline in minutes instead of seconds
 # 11/07/21  v1.08 - changed printStatusSeconds from 30 seconds to 120 seconds.  Added code to reset panStamp on startup
-  
-VERSION = "1.08"
+# 11/07/22  v1.09 - 1 year later :).  Added print statement on startup that states printout detail (PRINT_DETAIL_OPTION)
+# 03/02/23  v1.10 - Added public IP to weekly Sunday status text message
+
+
+VERSION = "1.10"
 
 import smbus  # Used for I2C
 import time
@@ -36,6 +46,7 @@ from PIL import Image, ImageDraw, ImageFont
 import digitalio   # https://circuitpython.readthedocs.io/en/5.3.x/shared-bindings/digitalio/__init__.html
 import busio       # https://circuitpython.readthedocs.io/en/latest/shared-bindings/busio/
 import board       # https://circuitpython.readthedocs.io/en/5.3.x/shared-bindings/board/__init__.html
+import requests # used to get public IP address   Ref: https://stackoverflow.com/questions/61347442/how-can-i-find-my-ip-address-with-python-not-local-ip
 
 
 PRINT_DETAIL_OPTION = False  # True prints status of all sensors, False prints only wet sensors status
@@ -48,7 +59,7 @@ checksum_byte = data_len - 1 # Last byte in I2C packet is checksum
 NumWirelessSensors =  3  # max is 8
 NumWiredSensors    = 11
 
-printStatusSeconds = 120
+printStatusSeconds = 120  # Controls how frequently sensor status is printed
 resetSensorTimeofDay = 3600 * 8  # 8:00 AM - number of seconds after midnight to reset all the sensors' wet/dry status
 doubleCheckDelay =  120   # seconds to wait after a sensor turn wet to double check it again
 
@@ -301,14 +312,18 @@ def sendSMS(sms_msg):
 #------------------------------------------------------------------
 def sendStatusReport():
 
-    statusMsg = "" 
+
     for wirelessID in range (NumWirelessSensors):
         if (sensorInfo[wirelessID].UpdateAge < 255):
             statusMsg = "{}{} {}°, {:.2f}V\n".format(statusMsg, sensorInfo[wirelessID].desc, sensorInfo[wirelessID].temperature, sensorInfo[wirelessID].battery/1000 )
         else:
             statusMsg = "{}{} is offline\n".format(statusMsg, sensorInfo[wirelessID].desc)
 
-    sendSMS(statusMsg)
+    # Get public IP
+    public_IP = requests.get("http://wtfismuip.com/text").text
+    statusMsgwithIP = "Public IP: " + public_IP + "\n" + statusMsg
+    
+    sendSMS(statusMsgwithIP)
 
  
 #------------------------------------------------------------------
@@ -398,7 +413,7 @@ dayOfMonth = datetime.datetime.today().day         # Used in new day trigger
 resetSensorTimer = time.time() + (3600 * 24)       # This will be properly set at midnight
 statusReportTimer = time.time() + (3600 * 24 * 7)  # This will be properly set at Sunday at midnight
 
-# variables for eink display
+# variables for e-ink display
 spi =  busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
 ecs =  digitalio.DigitalInOut(board.CE0)
 dc =   digitalio.DigitalInOut(board.D22)
@@ -431,6 +446,12 @@ activeMsg = False # True if any sensor has a warning Wet, cold, low battery
 einkMessage(1) # Displayes default screen
 
 print ("Water Leak Detector, version " + VERSION + "\n")
+if(PRINT_DETAIL_OPTION == True):
+    print("PRINT_DETAIL_OPTION = True, so all sensors info will print out every " + str(printStatusSeconds) + " seconds\n")
+else:
+    print("PRINT_DETAIL_OPTION = False, so only wet sensors or wireless with low signal will print out\n")
+    
+
 
 # Reset panStamp on startup
 print ("Resetting panStamp - 11 seconds")
