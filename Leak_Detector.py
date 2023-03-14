@@ -30,9 +30,9 @@
 # 11/07/21  v1.08 - changed printStatusSeconds from 30 seconds to 120 seconds.  Added code to reset panStamp on startup
 # 11/07/22  v1.09 - 1 year later :).  Added print statement on startup that states printout detail (PRINT_DETAIL_OPTION)
 # 03/02/23  v1.10 - Added public IP to weekly Sunday status text message
+# 03/14/23  v1.11 - Bug in sendStatusReport(), it was missing statusMsg = ""
 
-
-VERSION = "1.10"
+VERSION = "1.11"
 
 import smbus  # Used for I2C
 import time
@@ -312,7 +312,7 @@ def sendSMS(sms_msg):
 #------------------------------------------------------------------
 def sendStatusReport():
 
-
+    statusMsg = ""
     for wirelessID in range (NumWirelessSensors):
         if (sensorInfo[wirelessID].UpdateAge < 255):
             statusMsg = "{}{} {}°, {:.2f}V\n".format(statusMsg, sensorInfo[wirelessID].desc, sensorInfo[wirelessID].temperature, sensorInfo[wirelessID].battery/1000 )
